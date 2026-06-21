@@ -54,24 +54,29 @@ export default function BillieEsscoExperience() {
     }
   }, []);
 
-  // ── Clamp pan so you can reach every edge but never go past it ──────────────
-  // When scaled by s, content is (vw*s) wide. The overflow beyond the viewport
-  // is (vw*s - vw) = vw*(s-1). We can translate ±half that in each direction.
+  // ── Transform model ─────────────────────────────────────────────────────────
+  // transformOrigin: "0 0" (top-left).
+  // panX/panY = translation of the top-left corner of the scaled content.
+  // At scale s, content is (vw*s) wide and (vh*s) tall.
+  // To keep content filling the screen: panX must be in [-(vw*s - vw), 0] = [-(s-1)*vw, 0]
+  // i.e. panX <= 0 (can't push content right past left edge)
+  //      panX >= -(s-1)*vw (can't pull content left past right edge)
+
   const clampPan = useCallback((s: number) => {
-    const maxX = Math.max(0, (window.innerWidth  * (s - 1)) / 2);
-    const maxY = Math.max(0, (window.innerHeight * (s - 1)) / 2);
-    panX.current = Math.min(maxX, Math.max(-maxX, panX.current));
-    panY.current = Math.min(maxY, Math.max(-maxY, panY.current));
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const minX = -(s - 1) * vw;  // most negative = panned fully right (seeing right side)
+    const minY = -(s - 1) * vh;
+    panX.current = Math.min(0, Math.max(minX, panX.current));
+    panY.current = Math.min(0, Math.max(minY, panY.current));
   }, []);
 
-  // ── Apply CSS transform ──────────────────────────────────────────────────────
-  // transformOrigin: "50% 50%" (default) — scale from viewport centre.
-  // Then translate by panX/panY to pan around.
   const applyTransform = useCallback(() => {
     const el = wrapperRef.current;
     if (!el) return;
     const s = zoomScale.current;
-    el.style.transform = `scale(${s}) translate(${panX.current / s}px, ${panY.current / s}px)`;
+    el.style.transformOrigin = "0 0";
+    el.style.transform = `translate(${panX.current}px, ${panY.current}px) scale(${s})`;
   }, []);
 
   // ── Hit detection ────────────────────────────────────────────────────────────
@@ -139,16 +144,17 @@ export default function BillieEsscoExperience() {
 
       if (newScale !== zoomScale.current) {
         // Keep the pinch midpoint visually fixed.
-        // transform is scale(s) with origin at viewport centre, then translate(panX/s, panY/s).
-        // To keep midpoint fixed: panX_new = panX_old*(s_new/s_old) + (mid - vw/2)*(1 - s_new/s_old)
+        // Model: translate(panX, panY) scale(s), transformOrigin "0 0".
+        // A viewport point P maps to content point: (P - panX) / s
+        // For midpoint M to stay fixed across scale change s_old → s_new:
+        //   (M - panX_new) / s_new = (M - panX_old) / s_old
+        //   panX_new = M - (M - panX_old) * (s_new / s_old)
         const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
         const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
         const scaleDelta = newScale / zoomScale.current;
 
-        panX.current = panX.current * scaleDelta + (midX - vw / 2) * (1 - scaleDelta);
-        panY.current = panY.current * scaleDelta + (midY - vh / 2) * (1 - scaleDelta);
+        panX.current = midX - (midX - panX.current) * scaleDelta;
+        panY.current = midY - (midY - panY.current) * scaleDelta;
 
         zoomScale.current = newScale;
         clampPan(newScale);
