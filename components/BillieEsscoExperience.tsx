@@ -7,99 +7,31 @@ import CurtainReveal from "./CurtainReveal";
 import MusicExperience from "./MusicExperience";
 
 // ─── ASSET CONFIGURATION ──────────────────────────────────────────────────────
-// Replace these with your actual asset paths or URLs.
-// Place files in /public and reference as "/filename.png" and "/filename.wav"
-// OR use direct URLs as below.
-
 const WALDO_IMAGE_URL =
   "https://www.dropbox.com/scl/fi/z4cs5m6bhxa1v5l45cskx/witwibe.png?rlkey=pzxld8k0eeaah6w055u3ca3ki&st=f5bu3oa0&dl=1";
 
 const AUDIO_URL = "/track.mp3";
 
 // ─── CHARACTER LOCATION (original image coordinates) ──────────────────────────
-const CHAR_X = 1140;   // center x in original image
-const CHAR_Y = 359;    // center y in original image
-const HIT_RADIUS = 45; // hit radius in original image pixels
-
-// ─── NATURAL IMAGE DIMENSIONS (set after load) ────────────────────────────────
-// These will be filled by the onLoad handler; defaults are placeholders only.
-const DEFAULT_NATURAL_W = 2000;
-const DEFAULT_NATURAL_H = 1200;
+const CHAR_X      = 1140; // x in original image pixels
+const CHAR_Y      = 359;  // y in original image pixels
+const HIT_RADIUS  = 45;   // radius in original image pixels
 
 type Phase = "search" | "revealing" | "revealed";
 
 export default function BillieEsscoExperience() {
   const [showIntro, setShowIntro] = useState(true);
-  const [phase, setPhase] = useState<Phase>("search");
-  const [shaking, setShaking] = useState(false);
+  const [phase, setPhase]         = useState<Phase>("search");
+  const [shaking, setShaking]     = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
 
-  const imgRef = useRef<HTMLImageElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const naturalW = useRef(DEFAULT_NATURAL_W);
-  const naturalH = useRef(DEFAULT_NATURAL_H);
+  const imgRef    = useRef<HTMLImageElement>(null);
+  const naturalW  = useRef(0);
+  const naturalH  = useRef(0);
 
   useEffect(() => {
     setIsTouchDevice("ontouchstart" in window || navigator.maxTouchPoints > 0);
   }, []);
-
-  // ─── Coordinate scaling ─────────────────────────────────────────────────────
-  // The image uses object-fit: contain inside the viewport.
-  // We compute the rendered image rect to convert click coords correctly.
-  const getRenderedImageRect = useCallback(() => {
-    const img = imgRef.current;
-    if (!img) return null;
-
-    const vW = window.innerWidth;
-    const vH = window.innerHeight;
-    const iW = naturalW.current;
-    const iH = naturalH.current;
-
-    const scale = Math.min(vW / iW, vH / iH);
-    const renderedW = iW * scale;
-    const renderedH = iH * scale;
-    const offsetX = (vW - renderedW) / 2;
-    const offsetY = (vH - renderedH) / 2;
-
-    return { offsetX, offsetY, renderedW, renderedH, scale };
-  }, []);
-
-  const checkHit = useCallback((clientX: number, clientY: number): boolean => {
-    const rect = getRenderedImageRect();
-    if (!rect) return false;
-
-    // Convert click from viewport coords to original image coords
-    const imgX = (clientX - rect.offsetX) / rect.scale;
-    const imgY = (clientY - rect.offsetY) / rect.scale;
-
-    const dx = imgX - CHAR_X;
-    const dy = imgY - CHAR_Y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    return dist <= HIT_RADIUS;
-  }, [getRenderedImageRect]);
-
-  const handleClick = useCallback((clientX: number, clientY: number) => {
-    if (phase !== "search" || showIntro) return;
-
-    if (checkHit(clientX, clientY)) {
-      setPhase("revealing");
-      // curtains slide in (0.8s) then open (1.0s) = ~2.0s total; give a little buffer
-      setTimeout(() => setPhase("revealed"), 2200);
-    } else {
-      setShaking(true);
-      setTimeout(() => setShaking(false), 500);
-    }
-  }, [phase, showIntro, checkHit]);
-
-  const handleMouseClick = useCallback((e: React.MouseEvent) => {
-    handleClick(e.clientX, e.clientY);
-  }, [handleClick]);
-
-  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    const touch = e.changedTouches[0];
-    if (touch) handleClick(touch.clientX, touch.clientY);
-  }, [handleClick]);
 
   const handleImageLoad = useCallback(() => {
     const img = imgRef.current;
@@ -109,24 +41,85 @@ export default function BillieEsscoExperience() {
     }
   }, []);
 
+  // ─── Hit detection ────────────────────────────────────────────────────────
+  // Uses getBoundingClientRect() on the img element — the only reliable method
+  // across mobile zoom levels, browser chrome (address bar / safe areas),
+  // device pixel ratios, and any scroll offset.
+  // clientX/clientY from MouseEvent and TouchEvent are already in the same
+  // viewport coordinate space as getBoundingClientRect(), so no DPR scaling needed.
+  const checkHit = useCallback((clientX: number, clientY: number): boolean => {
+    const img = imgRef.current;
+    if (!img || !naturalW.current || !naturalH.current) return false;
+
+    // True rendered position/size of the <img> element in viewport coords
+    const rect     = img.getBoundingClientRect();
+    const elemW    = rect.width;
+    const elemH    = rect.height;
+    const natW     = naturalW.current;
+    const natH     = naturalH.current;
+
+    // object-fit: contain — image is letterboxed inside the element.
+    // Compute the scale and the offset of actual image pixels within the element.
+    const scale    = Math.min(elemW / natW, elemH / natH);
+    const imgRendW = natW * scale;
+    const imgRendH = natH * scale;
+    const imgLeft  = rect.left + (elemW - imgRendW) / 2;
+    const imgTop   = rect.top  + (elemH - imgRendH) / 2;
+
+    // Map viewport tap coords → original image pixel coords
+    const imgX = (clientX - imgLeft) / scale;
+    const imgY = (clientY - imgTop)  / scale;
+
+    // Reject taps in the letterbox bars (outside image content)
+    if (imgX < 0 || imgY < 0 || imgX > natW || imgY > natH) return false;
+
+    const dist = Math.sqrt((imgX - CHAR_X) ** 2 + (imgY - CHAR_Y) ** 2);
+    return dist <= HIT_RADIUS;
+  }, []);
+
+  const handleClick = useCallback((clientX: number, clientY: number) => {
+    if (phase !== "search" || showIntro) return;
+
+    if (checkHit(clientX, clientY)) {
+      setPhase("revealing");
+      setTimeout(() => setPhase("revealed"), 2200);
+    } else {
+      setShaking(true);
+      setTimeout(() => setShaking(false), 500);
+    }
+  }, [phase, showIntro, checkHit]);
+
+  const handleMouseClick = useCallback((e: React.MouseEvent) => {
+    // Ignore if this is also a touch device firing a synthetic mouse event
+    handleClick(e.clientX, e.clientY);
+  }, [handleClick]);
+
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    // Prevent the browser from also firing a synthetic click after touchend
+    e.preventDefault();
+    const touch = e.changedTouches[0];
+    if (touch) handleClick(touch.clientX, touch.clientY);
+  }, [handleClick]);
+
   const searchScene = (
     <div
-      ref={containerRef}
-      className={phase === "search" && !showIntro ? "search-cursor-active" : ""}
       style={{
         position: "relative",
-        width: "100vw",
-        height: "100vh",
+        width: "100%",
+        height: "100%",
         background: "#0f0500",
         overflow: "hidden",
         userSelect: "none",
+        WebkitUserSelect: "none",
+        // Prevent pull-to-refresh and page scroll on mobile while searching
+        touchAction: "none",
       }}
+      className={phase === "search" && !showIntro ? "search-cursor-active" : ""}
       onClick={handleMouseClick}
       onTouchEnd={handleTouchEnd}
       role="application"
       aria-label="Search scene — find Billie Essco"
     >
-      {/* The Where's Waldo scene */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         ref={imgRef}
@@ -148,7 +141,7 @@ export default function BillieEsscoExperience() {
         }}
       />
 
-      {/* Top instruction bar (fades after dismiss) */}
+      {/* Instruction bar */}
       <AnimatePresence>
         {!showIntro && phase === "search" && (
           <motion.div
@@ -185,7 +178,7 @@ export default function BillieEsscoExperience() {
         )}
       </AnimatePresence>
 
-      {/* Custom cursor (desktop only) */}
+      {/* Custom cursor — desktop only */}
       {!isTouchDevice && (
         <SearchCursor
           active={!showIntro && phase === "search"}
@@ -198,11 +191,7 @@ export default function BillieEsscoExperience() {
   return (
     <>
       <IntroOverlay visible={showIntro} onDismiss={() => setShowIntro(false)} />
-
-      <CurtainReveal
-        phase={phase}
-        searchContent={searchScene}
-      >
+      <CurtainReveal phase={phase} searchContent={searchScene}>
         <MusicExperience audioSrc={AUDIO_URL} />
       </CurtainReveal>
     </>
