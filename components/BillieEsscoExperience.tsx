@@ -111,8 +111,8 @@ export default function BillieEsscoExperience() {
         overflow: "hidden",
         userSelect: "none",
         WebkitUserSelect: "none",
-        // Prevent pull-to-refresh and page scroll on mobile while searching
-        touchAction: "none",
+        // Allow scroll/pinch-zoom gestures but still receive tap events cleanly
+        touchAction: "pan-x pan-y",
       }}
       className={phase === "search" && !showIntro ? "search-cursor-active" : ""}
       onClick={handleMouseClick}
